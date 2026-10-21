@@ -12,6 +12,7 @@ import {
   CircleHelp,
   Gauge,
   Leaf,
+  LogOut,
   Menu,
   Radio,
   Settings2,
@@ -73,6 +74,8 @@ const demoOverview: Overview = {
 };
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8001";
+const TOKEN_KEY = "mrv_access_token";
+const TENANT_KEY = "mrv_tenant_id";
 
 function formatNumber(value: number, digits = 0) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: digits }).format(value);
@@ -116,14 +119,34 @@ function MetricCard({
 
 function App() {
   const [overview, setOverview] = useState<Overview>(demoOverview);
+  const [token, setToken] = useState(() => window.localStorage.getItem(TOKEN_KEY));
+  const [tenantId, setTenantId] = useState(() => window.localStorage.getItem(TENANT_KEY));
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [tenantName, setTenantName] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [range, setRange] = useState("Today");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
 
-  async function loadOverview() {
+  async function loadOverview(authToken = token, workspaceId = tenantId) {
+    if (!authToken) return;
     setIsRefreshing(true);
     try {
-      const response = await fetch(`${API_URL}/v1/dashboard/overview`);
+      const query = workspaceId ? `?tenant_id=${encodeURIComponent(workspaceId)}` : "";
+      const response = await fetch(`${API_URL}/v1/dashboard/overview${query}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (response.status === 401) {
+        window.localStorage.removeItem(TOKEN_KEY);
+        window.localStorage.removeItem(TENANT_KEY);
+        setToken(null);
+        setTenantId(null);
+        setAuthError("Your session expired. Sign in again.");
+        return;
+      }
       if (!response.ok) throw new Error("No live overview available");
       const data = (await response.json()) as Overview;
       setOverview({ ...data, source: "live" });
@@ -134,9 +157,128 @@ function App() {
     }
   }
 
+  async function submitAuth(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError("");
+    setIsAuthenticating(true);
+    try {
+      const response = await fetch(
+        `${API_URL}/v1/auth/${isRegistering ? "register" : "login"}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            isRegistering
+              ? { email, password, tenant_name: tenantName }
+              : { email, password },
+          ),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        const detail = Array.isArray(result.detail) ? result.detail.join(" ") : result.detail;
+        throw new Error(detail ?? "Could not sign in.");
+      }
+
+      const accessToken = result.access_token as string;
+      let workspaceId = result.tenant?.id as string | undefined;
+      if (!workspaceId) {
+        const tenantsResponse = await fetch(`${API_URL}/v1/tenants`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!tenantsResponse.ok) throw new Error("Could not load your workspaces.");
+        const tenants = (await tenantsResponse.json()) as Array<{ id: string }>;
+        workspaceId = tenants[0]?.id;
+      }
+      if (!workspaceId) throw new Error("Your account has no workspace yet.");
+
+      window.localStorage.setItem(TOKEN_KEY, accessToken);
+      window.localStorage.setItem(TENANT_KEY, workspaceId);
+      setTenantId(workspaceId);
+      setToken(accessToken);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Could not sign in.");
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  function signOut() {
+    window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(TENANT_KEY);
+    setToken(null);
+    setTenantId(null);
+    setOverview(demoOverview);
+  }
+
   useEffect(() => {
-    void loadOverview();
-  }, []);
+    if (token) void loadOverview(token, tenantId);
+  }, [token, tenantId]);
+
+  if (!token) {
+    return (
+      <main className="auth-page">
+        <form className="auth-card" onSubmit={(event) => void submitAuth(event)}>
+          <div className="brand auth-brand">
+            <div className="brand__mark"><Leaf size={19} strokeWidth={2.5} /></div>
+            <div><strong>mrv</strong><span>command center</span></div>
+          </div>
+          <p className="eyebrow">Predictive Green Energy Engine</p>
+          <h1>{isRegistering ? "Create your workspace" : "Welcome back"}</h1>
+          <p className="auth-description">
+            {isRegistering
+              ? "Start tracking interval energy, renewable matching, and carbon emissions."
+              : "Sign in to view your energy and carbon data."}
+          </p>
+          <label htmlFor="auth-email">Email</label>
+          <input
+            id="auth-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+          />
+          <label htmlFor="auth-password">Password</label>
+          <input
+            id="auth-password"
+            type="password"
+            autoComplete={isRegistering ? "new-password" : "current-password"}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            minLength={isRegistering ? 12 : 1}
+            required
+          />
+          {isRegistering && (
+            <>
+              <label htmlFor="tenant-name">Workspace name</label>
+              <input
+                id="tenant-name"
+                value={tenantName}
+                onChange={(event) => setTenantName(event.target.value)}
+                maxLength={255}
+                required
+              />
+            </>
+          )}
+          {authError && <p className="auth-error" role="alert">{authError}</p>}
+          <button className="primary-button auth-submit" type="submit" disabled={isAuthenticating}>
+            {isAuthenticating ? "Please wait…" : isRegistering ? "Create account" : "Sign in"}
+          </button>
+          <button
+            className="auth-switch"
+            type="button"
+            onClick={() => {
+              setIsRegistering(!isRegistering);
+              setAuthError("");
+            }}
+          >
+            {isRegistering ? "Already have an account? Sign in" : "New here? Create a workspace"}
+          </button>
+        </form>
+      </main>
+    );
+  }
 
   const { totals } = overview;
   const renewableShare = totals.consumed_kwh ? (totals.matched_kwh / totals.consumed_kwh) * 100 : 0;
@@ -176,7 +318,7 @@ function App() {
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(!mobileNav)}><Menu size={20} /></button>
           <div className="breadcrumbs"><span>Workspace</span><span>/</span><strong>Overview</strong></div>
-          <div className="topbar__actions"><div className="live-pill"><span className="pulse-dot" />Live monitoring</div><button className="icon-button" aria-label="Notifications"><Bell size={18} /><span className="notification-dot" /></button><div className="topbar-avatar">JD</div></div>
+          <div className="topbar__actions"><div className="live-pill"><span className="pulse-dot" />Live monitoring</div><button className="icon-button" aria-label="Notifications"><Bell size={18} /><span className="notification-dot" /></button><button className="icon-button" aria-label="Sign out" onClick={signOut}><LogOut size={18} /></button><div className="topbar-avatar">JD</div></div>
         </header>
 
         <div className="page-content">

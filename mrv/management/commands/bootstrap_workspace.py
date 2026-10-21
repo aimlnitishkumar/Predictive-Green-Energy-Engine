@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -14,6 +15,10 @@ class Command(BaseCommand):
         parser.add_argument("--tenant-slug", required=True)
         parser.add_argument("--meter-id", required=True, help="External meter identifier.")
         parser.add_argument("--meter-name", required=True)
+        parser.add_argument(
+            "--owner-email",
+            help="Email of an existing API user to add to the workspace.",
+        )
         parser.add_argument(
             "--meter-type",
             choices=Meter.MeterType.values,
@@ -47,6 +52,13 @@ class Command(BaseCommand):
                 "active": True,
             },
         )
+        if options["owner_email"]:
+            owner = get_user_model().objects.filter(
+                email__iexact=options["owner_email"].strip()
+            ).first()
+            if owner is None:
+                raise CommandError("No user exists with the supplied owner email.")
+            tenant.members.add(owner)
         self.stdout.write(
             self.style.SUCCESS(
                 f"Workspace {'created' if tenant_created else 'updated'}: "

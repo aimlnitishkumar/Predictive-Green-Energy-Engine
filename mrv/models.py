@@ -1,10 +1,12 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
 class Tenant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    members = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="tenants")
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=100, unique=True)
     grid_emission_factor_kgco2_per_kwh = models.DecimalField(
@@ -17,6 +19,31 @@ class Tenant(models.Model):
 
     class Meta:
         ordering = ["name"]
+
+
+class CarbonReport(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        FAILURE = "FAILURE", "Failure"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="reports")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="carbon_reports"
+    )
+    start = models.DateTimeField()
+    end = models.DateTimeField()
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.PENDING
+    )
+    result = models.JSONField(null=True, blank=True)
+    error_message = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class Meter(models.Model):

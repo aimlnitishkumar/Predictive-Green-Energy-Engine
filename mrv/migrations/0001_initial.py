@@ -59,7 +59,7 @@ class Migration(migrations.Migration):
         migrations.AddIndex(model_name="energyreading", index=models.Index(fields=["meter", "timestamp"], name="mrv_energy_meter_i_3f4f7d_idx")),
         migrations.RunSQL(
             # Timescale requires every unique index on a hypertable to include its time column.
-            sql="ALTER TABLE mrv_energyreading DROP CONSTRAINT mrv_energyreading_pkey; SELECT create_hypertable('mrv_energyreading', 'timestamp', if_not_exists => TRUE, migrate_data => TRUE);",
+            sql="CREATE EXTENSION IF NOT EXISTS timescaledb; ALTER TABLE mrv_energyreading DROP CONSTRAINT mrv_energyreading_pkey; SELECT create_hypertable('mrv_energyreading', 'timestamp', if_not_exists => TRUE, migrate_data => TRUE);",
             reverse_sql="SELECT 1;",
         ),
     ]
